@@ -1,0 +1,39 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /account
+
+spring:
+  application:
+    name: accounting-system
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/accounting_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+# JWT Configuration
+jwt:
+  secret: YWNjb3VudGluZy1zeXN0ZW0tc2VjcmV0LWtleS1mb3Itand0LXRva2VuLWdlbmVyYXRpb24tMjAyNA==
+  expiration: 86400000  # 24 hours in milliseconds
+
+# Logging
+logging:
+  level:
+    com.accounting: DEBUG
+    org.springframework.security: INFO

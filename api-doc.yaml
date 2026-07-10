@@ -1,0 +1,544 @@
+openapi: 3.0.3
+info:
+  title: 个人记账系统 API
+  description: |
+    ## 个人记账系统后端服务接口文档
+    
+    ### 项目简介
+    基于 Spring Boot 3.x 的个人记账系统，支持多用户、账单管理、预算管理、周期性账单等功能。
+    
+    ### 技术栈
+    - Java 17 + Spring Boot 3.2
+    - MySQL 8.0 + JPA/Hibernate
+    - Spring Security + JWT
+    - BCrypt 密码加密
+    
+    ### 认证方式
+    除登录注册外，所有接口需在请求头携带 JWT Token：
+    ```
+    Authorization: Bearer <token>
+    ```
+    
+    ### 响应格式
+    统一响应格式：
+    ```json
+    { "code": 200, "message": "success", "data": {} }
+    ```
+    
+    ### 默认账号
+    - 管理员：admin / admin123
+  version: 1.0.0
+  contact:
+    name: 小爪
+
+servers:
+  - url: http://localhost:8080/account
+    description: 本地开发环境
+
+tags:
+  - name: 认证
+    description: 用户登录注册
+  - name: 账单
+    description: 账单CRUD与统计
+  - name: 用户
+    description: 个人信息管理
+  - name: 预算
+    description: 月度预算管理
+  - name: 周期账单
+    description: 周期性账单管理
+  - name: 分类
+    description: 收支分类
+  - name: 管理员
+    description: 系统管理功能
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ResultVO:
+      type: object
+      properties:
+        code: { type: integer, description: 状态码, example: 200 }
+        message: { type: string, description: 消息, example: success }
+        data: { type: object, description: 数据 }
+
+    LoginDTO:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, description: 用户名 }
+        password: { type: string, description: 密码 }
+
+    RegisterDTO:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, description: 用户名, minLength: 3, maxLength: 50 }
+        password: { type: string, description: 密码, minLength: 6, maxLength: 100 }
+        nickname: { type: string, description: 昵称, maxLength: 50 }
+
+    LoginVO:
+      type: object
+      properties:
+        token: { type: string, description: JWT令牌 }
+        userId: { type: integer, description: 用户ID }
+        username: { type: string, description: 用户名 }
+        nickname: { type: string, description: 昵称 }
+        role: { type: string, description: 角色, enum: [USER, ADMIN] }
+
+    BillDTO:
+      type: object
+      required: [categoryId, type, amount, billDate]
+      properties:
+        categoryId: { type: integer, description: 分类ID }
+        type: { type: string, description: 类型, enum: [INCOME, EXPENSE] }
+        amount: { type: number, description: 金额, minimum: 0.01 }
+        description: { type: string, description: 备注 }
+        billDate: { type: string, format: date, description: 账单日期 }
+
+    BillVO:
+      type: object
+      properties:
+        id: { type: integer }
+        userId: { type: integer }
+        categoryId: { type: integer }
+        categoryName: { type: string }
+        categoryIcon: { type: string }
+        type: { type: string }
+        amount: { type: number }
+        description: { type: string }
+        billDate: { type: string, format: date }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    PageVO:
+      type: object
+      properties:
+        total: { type: integer, description: 总条数 }
+        page: { type: integer, description: 当前页 }
+        size: { type: integer, description: 每页大小 }
+        totalPages: { type: integer, description: 总页数 }
+        records: { type: array, items: {} }
+
+    BalanceVO:
+      type: object
+      properties:
+        totalIncome: { type: number, description: 总收入 }
+        totalExpense: { type: number, description: 总支出 }
+        balance: { type: number, description: 余额 }
+
+    StatisticsVO:
+      type: object
+      properties:
+        totalIncome: { type: number }
+        totalExpense: { type: number }
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              categoryId: { type: integer }
+              categoryName: { type: string }
+              categoryIcon: { type: string }
+              type: { type: string }
+              amount: { type: number }
+              percentage: { type: number }
+              count: { type: integer }
+
+    UserUpdateDTO:
+      type: object
+      properties:
+        nickname: { type: string }
+        email: { type: string }
+        phone: { type: string }
+
+    PasswordChangeDTO:
+      type: object
+      required: [oldPassword, newPassword]
+      properties:
+        oldPassword: { type: string }
+        newPassword: { type: string, minLength: 6, maxLength: 100 }
+
+    BudgetDTO:
+      type: object
+      required: [year, month, budgetAmount]
+      properties:
+        categoryId: { type: integer, description: 分类ID(null=总预算) }
+        year: { type: integer }
+        month: { type: integer }
+        budgetAmount: { type: number }
+
+    BudgetVO:
+      type: object
+      properties:
+        id: { type: integer }
+        categoryId: { type: integer }
+        categoryName: { type: string }
+        year: { type: integer }
+        month: { type: integer }
+        budgetAmount: { type: number }
+        spentAmount: { type: number }
+        remaining: { type: number }
+        usagePercent: { type: number }
+        isOverBudget: { type: boolean }
+
+    RecurringBillDTO:
+      type: object
+      required: [categoryId, type, amount, cycleType, nextDate]
+      properties:
+        categoryId: { type: integer }
+        type: { type: string, enum: [INCOME, EXPENSE] }
+        amount: { type: number }
+        description: { type: string }
+        cycleType: { type: string, enum: [DAILY, WEEKLY, MONTHLY, YEARLY] }
+        cycleValue: { type: integer, description: 周期值, default: 1 }
+        nextDate: { type: string, format: date }
+
+    RecurringBillVO:
+      type: object
+      properties:
+        id: { type: integer }
+        categoryId: { type: integer }
+        categoryName: { type: string }
+        type: { type: string }
+        amount: { type: number }
+        description: { type: string }
+        cycleType: { type: string }
+        cycleValue: { type: integer }
+        nextDate: { type: string, format: date }
+        isActive: { type: boolean }
+
+    UserVO:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        nickname: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        role: { type: string }
+        status: { type: string }
+        createdAt: { type: string }
+
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string, enum: [INCOME, EXPENSE] }
+        icon: { type: string }
+        sortOrder: { type: integer }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== 认证 ====================
+  /api/auth/register:
+    post:
+      tags: [认证]
+      summary: 用户注册
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterDTO' }
+      responses:
+        '200': { description: 注册成功 }
+
+  /api/auth/login:
+    post:
+      tags: [认证]
+      summary: 用户登录
+      description: 登录成功返回JWT Token，后续请求需在Header中携带
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginDTO' }
+            example:
+              username: "admin"
+              password: "admin123"
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResultVO'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LoginVO' }
+
+  # ==================== 账单 ====================
+  /api/bills:
+    post:
+      tags: [账单]
+      summary: 添加账单记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BillDTO' }
+      responses:
+        '200': { description: 创建成功 }
+
+    get:
+      tags: [账单]
+      summary: 查询账单列表
+      description: 支持分页、按时间范围、按分类、按类型查询
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 10 } }
+        - { name: type, in: query, schema: { type: string, enum: [INCOME, EXPENSE] } }
+        - { name: categoryId, in: query, schema: { type: integer } }
+        - { name: startDate, in: query, schema: { type: string, format: date } }
+        - { name: endDate, in: query, schema: { type: string, format: date } }
+        - { name: keyword, in: query, schema: { type: string }, description: 备注关键词搜索 }
+      responses:
+        '200': { description: 查询成功 }
+
+  /api/bills/{id}:
+    get:
+      tags: [账单]
+      summary: 查询账单详情
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 查询成功 }
+
+    put:
+      tags: [账单]
+      summary: 修改账单记录
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BillDTO' }
+      responses:
+        '200': { description: 修改成功 }
+
+    delete:
+      tags: [账单]
+      summary: 删除账单记录
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 删除成功 }
+
+  /api/bills/balance:
+    get:
+      tags: [账单]
+      summary: 查询总余额
+      description: 总收入 - 总支出
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResultVO'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BalanceVO' }
+
+  /api/bills/statistics/category:
+    get:
+      tags: [账单]
+      summary: 按分类统计收支
+      parameters:
+        - { name: startDate, in: query, schema: { type: string, format: date } }
+        - { name: endDate, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: 统计结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResultVO'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/StatisticsVO' }
+
+  /api/bills/statistics/time:
+    get:
+      tags: [账单]
+      summary: 按时间范围统计收支
+      parameters:
+        - { name: startDate, in: query, required: true, schema: { type: string, format: date } }
+        - { name: endDate, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 统计结果 }
+
+  # ==================== 用户 ====================
+  /api/users/profile:
+    get:
+      tags: [用户]
+      summary: 查询个人信息
+      responses:
+        '200': { description: 查询成功 }
+
+    put:
+      tags: [用户]
+      summary: 修改个人信息
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdateDTO' }
+      responses:
+        '200': { description: 修改成功 }
+
+  /api/users/password:
+    put:
+      tags: [用户]
+      summary: 修改密码
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordChangeDTO' }
+      responses:
+        '200': { description: 修改成功 }
+
+  # ==================== 预算 ====================
+  /api/budgets:
+    post:
+      tags: [预算]
+      summary: 设置月度预算
+      description: 可按总支出或按分类设置预算
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BudgetDTO' }
+      responses:
+        '200': { description: 设置成功 }
+
+    get:
+      tags: [预算]
+      summary: 查询预算列表
+      parameters:
+        - { name: year, in: query, required: true, schema: { type: integer } }
+        - { name: month, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 查询成功 }
+
+  /api/budgets/usage:
+    get:
+      tags: [预算]
+      summary: 实时计算预算使用情况
+      description: 返回各预算的已用金额、剩余金额、使用百分比、是否超支
+      parameters:
+        - { name: year, in: query, required: true, schema: { type: integer } }
+        - { name: month, in: query, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 查询成功 }
+
+  # ==================== 周期账单 ====================
+  /api/recurring-bills:
+    post:
+      tags: [周期账单]
+      summary: 创建周期账单
+      description: 支持每天/每周/每月/每年自动生成账单
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecurringBillDTO' }
+            example:
+              categoryId: 1
+              type: "EXPENSE"
+              amount: 2000
+              description: "每月房租"
+              cycleType: "MONTHLY"
+              cycleValue: 1
+              nextDate: "2024-08-01"
+      responses:
+        '200': { description: 创建成功 }
+
+    get:
+      tags: [周期账单]
+      summary: 查询周期账单列表
+      responses:
+        '200': { description: 查询成功 }
+
+  /api/recurring-bills/{id}:
+    delete:
+      tags: [周期账单]
+      summary: 删除周期账单
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 删除成功 }
+
+  # ==================== 分类 ====================
+  /api/categories:
+    get:
+      tags: [分类]
+      summary: 获取所有收支分类
+      security: []
+      responses:
+        '200': { description: 分类列表 }
+
+  # ==================== 管理员 ====================
+  /api/admin/users:
+    get:
+      tags: [管理员]
+      summary: 查询用户列表
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 10 } }
+        - { name: keyword, in: query, schema: { type: string }, description: 用户名/昵称搜索 }
+      responses:
+        '200': { description: 查询成功 }
+
+  /api/admin/users/{id}/status:
+    put:
+      tags: [管理员]
+      summary: 禁用/启用用户
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 操作成功 }
+
+  /api/admin/users/{id}/reset-password:
+    put:
+      tags: [管理员]
+      summary: 重置用户密码
+      description: 重置为默认密码 123456
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 操作成功 }
+
+  /api/admin/statistics:
+    get:
+      tags: [管理员]
+      summary: 查询系统用户总数和账单总数
+      responses:
+        '200':
+          description: 统计数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResultVO'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          totalUsers: { type: integer }
+                          totalBills: { type: integer }
