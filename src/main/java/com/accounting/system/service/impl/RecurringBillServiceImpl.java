@@ -20,6 +20,24 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * ============================================================
+ * 周期账单服务实现
+ * ============================================================
+ *
+ * 【自动生成流程】
+ * processDueRecurringBills 的执行流程：
+ * 1. 查询所有 isActive=true 且 nextDate <= 今天 的记录
+ * 2. 为每条记录生成实际 Bill（标记 "[周期]" 前缀）
+ * 3. 计算并更新下一次执行日期（nextDate = nextDate + N天/周/月/年）
+ *
+ * 【定时调度】
+ * cron = "0 0 3 * * ?" 表示每天凌晨3:00执行
+ * 秒 分 时 日 月 周
+ *
+ * 【软删除】
+ * deleteRecurringBill 只设置 isActive=false，不物理删除
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -29,6 +47,10 @@ public class RecurringBillServiceImpl implements RecurringBillService {
     private final CategoryRepository categoryRepository;
     private final BillRepository billRepository;
 
+    /**
+     * 创建周期账单
+     * cycleValue 默认为1（如不传则为每1个月/每1周）
+     */
     @Override
     @Transactional
     public RecurringBillVO createRecurringBill(Long userId, RecurringBillDTO dto) {
@@ -51,6 +73,9 @@ public class RecurringBillServiceImpl implements RecurringBillService {
         return toRecurringBillVO(rb);
     }
 
+    /**
+     * 查询用户的所有活跃周期账单
+     */
     @Override
     public List<RecurringBillVO> listRecurringBills(Long userId) {
         return recurringBillRepository.findByUserIdAndIsActiveTrue(userId)
@@ -58,6 +83,10 @@ public class RecurringBillServiceImpl implements RecurringBillService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 软删除周期账单 —— 设置 isActive=false
+     * 同样需要归属权校验
+     */
     @Override
     @Transactional
     public void deleteRecurringBill(Long userId, Long id) {
@@ -72,6 +101,12 @@ public class RecurringBillServiceImpl implements RecurringBillService {
         recurringBillRepository.save(rb);
     }
 
+    /**
+     * 处理到期的周期账单 —— 定时任务入口
+     * 
+     * 每天凌晨3:00自动执行（由 @Scheduled 驱动）,
+     * 将所有 nextDate <= 今天 的活跃周期账单生成为实际账单
+     */
     @Override
     @Scheduled(cron = "0 0 3 * * ?") // 每天凌晨3点执行
     @Transactional
@@ -101,6 +136,13 @@ public class RecurringBillServiceImpl implements RecurringBillService {
         }
     }
 
+    /**
+     * 计算下一次执行日期
+     * 根据周期类型（日/周/月/年）和周期值（如每2个月）计算
+     *
+     * Java 17+ switch 表达式替代了传统的 switch-case,
+     * 直接返回计算结果，代码更简洁
+     */
     private LocalDate calculateNextDate(RecurringBill rb) {
         int value = rb.getCycleValue() != null ? rb.getCycleValue() : 1;
         return switch (rb.getCycleType()) {

@@ -14,6 +14,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.format.DateTimeFormatter;
 
+/**
+ * ============================================================
+ * 用户服务实现
+ * ============================================================
+ *
+ * 【密码安全】
+ * - 修改密码必须验证旧密码（passwordEncoder.matches）
+ * - 新密码经过BCrypt加密后存储（passwordEncoder.encode）
+ *
+ * 【部分更新】
+ * updateProfile 只更新非null字段，实现前端可只传要改的字段
+ */
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -21,6 +33,9 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
+    /**
+     * 获取个人信息
+     */
     @Override
     public UserVO getProfile(Long userId) {
         User user = userRepository.findById(userId)
@@ -28,6 +43,9 @@ public class UserServiceImpl implements UserService {
         return toUserVO(user);
     }
 
+    /**
+     * 更新个人信息 —— 部分更新，只改有值的字段
+     */
     @Override
     @Transactional
     public UserVO updateProfile(Long userId, UserUpdateDTO dto) {
@@ -48,6 +66,9 @@ public class UserServiceImpl implements UserService {
         return toUserVO(user);
     }
 
+    /**
+     * 修改密码 —— 先验证旧密码，再加密存储新密码
+     */
     @Override
     @Transactional
     public void changePassword(Long userId, PasswordChangeDTO dto) {

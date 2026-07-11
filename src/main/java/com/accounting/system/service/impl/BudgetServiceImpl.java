@@ -19,6 +19,26 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * ============================================================
+ * 预算服务实现
+ * ============================================================
+ *
+ * 【核心机制】
+ * 每个预算记录保存两条金额：
+ * - budgetAmount：用户设定的预算上限
+ * - spentAmount：实时计算的已支出金额（每次查询从账单表聚合）
+ *
+ * 【isOverBudget】
+ * 超预算标记 = spentAmount > budgetAmount，前端可用此字段切换警告色
+ *
+ * 【Upsert模式】
+ * setBudget 使用"存在则更新，不存在则创建"的 upsert 逻辑：
+ * 1. 先查询已存在的预算
+ * 2. 如果存在，更新金额
+ * 3. 如果不存在，build新实体
+ * 这样避免了重复创建预算记录
+ */
 @Service
 @RequiredArgsConstructor
 public class BudgetServiceImpl implements BudgetService {
@@ -27,6 +47,10 @@ public class BudgetServiceImpl implements BudgetService {
     private final CategoryRepository categoryRepository;
     private final BillRepository billRepository;
 
+    /**
+     * 设置预算（创建或更新）
+     * 支持分类预算（categoryId 不为null）和总预算（categoryId 为null）
+     */
     @Override
     @Transactional
     public BudgetVO setBudget(Long userId, BudgetDTO dto) {
@@ -76,6 +100,10 @@ public class BudgetServiceImpl implements BudgetService {
         return toBudgetVO(budget);
     }
 
+    /**
+     * 获取预算列表
+     * 每次查询都会实时更新 spentAmount，确保数据一致性
+     */
     @Override
     public List<BudgetVO> getBudgets(Long userId, int year, int month) {
         List<Budget> budgets = budgetRepository.findByUserIdAndYearAndMonth(userId, year, month);
@@ -97,6 +125,10 @@ public class BudgetServiceImpl implements BudgetService {
         return budgets.stream().map(this::toBudgetVO).collect(Collectors.toList());
     }
 
+    /**
+     * 获取预算使用率 —— 前端进度条的数据源
+     * 返回每个预算的已花费/预算金额比例信息
+     */
     @Override
     public List<BudgetVO> getBudgetUsage(Long userId, int year, int month) {
         List<Budget> budgets = budgetRepository.findByUserIdAndYearAndMonth(userId, year, month);

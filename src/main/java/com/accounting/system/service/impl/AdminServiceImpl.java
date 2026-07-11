@@ -21,6 +21,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * ============================================================
+ * 管理员服务实现
+ * ============================================================
+ *
+ * 【安全约束】
+ * - 不能禁用管理员账号（toggleUserStatus 中有判断）
+ * - 密码重置为固定默认值 123456（resetUserPassword）
+ *
+ * 【模糊搜索】
+ * listUsers 对 username 和 nickname 字段做 OR 模糊匹配
+ */
 @Service
 @RequiredArgsConstructor
 public class AdminServiceImpl implements AdminService {
@@ -29,6 +41,9 @@ public class AdminServiceImpl implements AdminService {
     private final BillRepository billRepository;
     private final PasswordEncoder passwordEncoder;
 
+    /**
+     * 分页查询用户列表，支持用户名/昵称模糊搜索
+     */
     @Override
     public PageVO<UserVO> listUsers(int page, int size, String keyword) {
         PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -51,6 +66,10 @@ public class AdminServiceImpl implements AdminService {
         return PageVO.of(userPage.getTotalElements(), page, size, records);
     }
 
+    /**
+     * 切换用户状态（启用 ↔ 禁用）
+     * 不能禁用管理员账号，防止锁死系统
+     */
     @Override
     @Transactional
     public void toggleUserStatus(Long userId) {
@@ -65,6 +84,9 @@ public class AdminServiceImpl implements AdminService {
         userRepository.save(user);
     }
 
+    /**
+     * 重置用户密码 —— 改为默认密码 123456（BCrypt加密后存储）
+     */
     @Override
     @Transactional
     public void resetUserPassword(Long userId) {
@@ -76,6 +98,9 @@ public class AdminServiceImpl implements AdminService {
         userRepository.save(user);
     }
 
+    /**
+     * 系统概览统计 —— 仪表盘首页数据
+     */
     @Override
     public Map<String, Long> getSystemStatistics() {
         Map<String, Long> stats = new HashMap<>();
