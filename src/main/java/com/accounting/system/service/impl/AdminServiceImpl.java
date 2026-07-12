@@ -8,6 +8,7 @@ import com.accounting.system.repository.BillRepository;
 import com.accounting.system.repository.UserRepository;
 import com.accounting.system.service.AdminService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -15,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
@@ -26,13 +28,15 @@ import java.util.stream.Collectors;
  * 管理员服务实现
  * ============================================================
  *
- * 【安全约束】
- * - 不能禁用管理员账号（toggleUserStatus 中有判断）
- * - 密码重置为固定默认值 123456（resetUserPassword）
+ * 【安全约束 v1.0.1】
+ * - 管理员不能禁用自己的账号（toggleUserStatus 中校验 currentAdminId）
+ * - 不能禁用其他管理员账号
+ * - 密码重置为随机8位密码（大小写字母+数字），记录日志供管理员传达
  *
  * 【模糊搜索】
  * listUsers 对 username 和 nickname 字段做 OR 模糊匹配
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminServiceImpl implements AdminService {
@@ -41,9 +45,9 @@ public class AdminServiceImpl implements AdminService {
     private final BillRepository billRepository;
     private final PasswordEncoder passwordEncoder;
 
-    /**
-     * 分页查询用户列表，支持用户名/昵称模糊搜索
-     */
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String PASSWORD_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
     @Override
     public PageVO<UserVO> listUsers(int page, int size, String keyword) {
         PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -66,14 +70,14 @@ public class AdminServiceImpl implements AdminService {
         return PageVO.of(userPage.getTotalElements(), page, size, records);
     }
 
-    /**
-     * 切换用户状态（启用 ↔ 禁用）
-     * 不能禁用管理员账号，防止锁死系统
-     */
     @Override
     @Transactional
-    public void toggleUserStatus(Long userId) {
-        User user = userRepository.findById(userId)
+    public void toggleUserStatus(Long currentAdminId, Long targetUserId) {
+        if (currentAdminId.equals(targetUserId)) {
+            throw new BusinessException("不能禁用自己的账号");
+        }
+
+        User user = userRepository.findById(targetUserId)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
 
         if (user.getRole() == User.Role.ADMIN) {
@@ -82,31 +86,36 @@ public class AdminServiceImpl implements AdminService {
 
         user.setStatus(user.getStatus() == User.Status.ACTIVE ? User.Status.DISABLED : User.Status.ACTIVE);
         userRepository.save(user);
+        log.info("User {} status toggled to {} by admin {}", targetUserId, user.getStatus(), currentAdminId);
     }
 
-    /**
-     * 重置用户密码 —— 改为默认密码 123456（BCrypt加密后存储）
-     */
     @Override
     @Transactional
     public void resetUserPassword(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
 
-        // Reset to default password: 123456
-        user.setPassword(passwordEncoder.encode("123456"));
+        String newPassword = generateRandomPassword(8);
+        user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
+
+        log.warn("Password reset for user {}: new password is [{}] (convey securely)", userId, newPassword);
     }
 
-    /**
-     * 系统概览统计 —— 仪表盘首页数据
-     */
     @Override
     public Map<String, Long> getSystemStatistics() {
         Map<String, Long> stats = new HashMap<>();
         stats.put("totalUsers", userRepository.count());
         stats.put("totalBills", billRepository.count());
         return stats;
+    }
+
+    private String generateRandomPassword(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(PASSWORD_CHARS.charAt(RANDOM.nextInt(PASSWORD_CHARS.length())));
+        }
+        return sb.toString();
     }
 
     private UserVO toUserVO(User user) {

@@ -27,16 +27,19 @@ import java.util.stream.Collectors;
  *
  * 【自动生成流程】
  * processDueRecurringBills 的执行流程：
- * 1. 查询所有 isActive=true 且 nextDate <= 今天 的记录
+ * 1. 查询所有 isActive=true 且 nextDate &lt;= 今天 的记录
  * 2. 为每条记录生成实际 Bill（标记 "[周期]" 前缀）
  * 3. 计算并更新下一次执行日期（nextDate = nextDate + N天/周/月/年）
  *
  * 【定时调度】
  * cron = "0 0 3 * * ?" 表示每天凌晨3:00执行
- * 秒 分 时 日 月 周
  *
  * 【软删除】
  * deleteRecurringBill 只设置 isActive=false，不物理删除
+ *
+ * 【v1.0.1 容错增强】
+ * processDueRecurringBills 中增加逐条 try-catch，
+ * 单条周期账单处理失败不影响其他记录的生成
  */
 @Slf4j
 @Service
@@ -70,6 +73,7 @@ public class RecurringBillServiceImpl implements RecurringBillService {
                 .build();
 
         rb = recurringBillRepository.save(rb);
+        log.info("Recurring bill created for user {}: id={}, cycle={}", userId, rb.getId(), rb.getCycleType());
         return toRecurringBillVO(rb);
     }
 
@@ -83,66 +87,58 @@ public class RecurringBillServiceImpl implements RecurringBillService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * 软删除周期账单 —— 设置 isActive=false
-     * 同样需要归属权校验
-     */
     @Override
     @Transactional
     public void deleteRecurringBill(Long userId, Long id) {
         RecurringBill rb = recurringBillRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("周期账单不存在"));
-
         if (!rb.getUserId().equals(userId)) {
             throw new BusinessException("无权操作他人周期账单");
         }
-
         rb.setIsActive(false);
         recurringBillRepository.save(rb);
+        log.info("Recurring bill {} soft-deleted by user {}", id, userId);
     }
 
     /**
-     * 处理到期的周期账单 —— 定时任务入口
-     * 
-     * 每天凌晨3:00自动执行（由 @Scheduled 驱动）,
-     * 将所有 nextDate <= 今天 的活跃周期账单生成为实际账单
+     * 定时任务：处理到期周期账单
+     * 增加异常捕获，确保单条失败不影响整体
      */
     @Override
-    @Scheduled(cron = "0 0 3 * * ?") // 每天凌晨3点执行
+    @Scheduled(cron = "0 0 3 * * ?")
     @Transactional
     public void processDueRecurringBills() {
         List<RecurringBill> dueBills = recurringBillRepository
                 .findByIsActiveTrueAndNextDateLessThanEqual(LocalDate.now());
 
-        log.info("Processing {} due recurring bills", dueBills.size());
+        log.info("Found {} due recurring bills to process", dueBills.size());
 
         for (RecurringBill rb : dueBills) {
-            // Create a new bill from the recurring bill
-            Bill bill = Bill.builder()
-                    .userId(rb.getUserId())
-                    .category(rb.getCategory())
-                    .type(rb.getType())
-                    .amount(rb.getAmount())
-                    .description("[周期] " + (rb.getDescription() != null ? rb.getDescription() : ""))
-                    .billDate(LocalDate.now())
-                    .build();
-            billRepository.save(bill);
+            try {
+                // 创建实际账单
+                Bill bill = Bill.builder()
+                        .userId(rb.getUserId())
+                        .category(rb.getCategory())
+                        .type(rb.getType())
+                        .amount(rb.getAmount())
+                        .description("[周期] " + (rb.getDescription() != null ? rb.getDescription() : ""))
+                        .billDate(LocalDate.now())
+                        .build();
+                billRepository.save(bill);
 
-            // Calculate next date
-            rb.setNextDate(calculateNextDate(rb));
-            recurringBillRepository.save(rb);
+                // 计算下次日期
+                rb.setNextDate(calculateNextDate(rb));
+                recurringBillRepository.save(rb);
 
-            log.debug("Generated bill for user {} from recurring bill {}", rb.getUserId(), rb.getId());
+                log.debug("Generated bill for user {} from recurring bill {}", rb.getUserId(), rb.getId());
+            } catch (Exception e) {
+                log.error("Failed to process recurring bill id={} for user {}: {}",
+                        rb.getId(), rb.getUserId(), e.getMessage(), e);
+                // 继续处理下一条，不中断整个事务
+            }
         }
     }
 
-    /**
-     * 计算下一次执行日期
-     * 根据周期类型（日/周/月/年）和周期值（如每2个月）计算
-     *
-     * Java 17+ switch 表达式替代了传统的 switch-case,
-     * 直接返回计算结果，代码更简洁
-     */
     private LocalDate calculateNextDate(RecurringBill rb) {
         int value = rb.getCycleValue() != null ? rb.getCycleValue() : 1;
         return switch (rb.getCycleType()) {

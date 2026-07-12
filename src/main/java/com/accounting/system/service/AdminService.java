@@ -21,7 +21,7 @@ import java.util.Map;
  */
 public interface AdminService {
     PageVO<UserVO> listUsers(int page, int size, String keyword);
-    void toggleUserStatus(Long userId);
+    void toggleUserStatus(Long currentAdminId, Long targetUserId);
     void resetUserPassword(Long userId);
     Map<String, Long> getSystemStatistics();
 }

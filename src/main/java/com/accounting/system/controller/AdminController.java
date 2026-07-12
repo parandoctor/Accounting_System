@@ -3,8 +3,10 @@ package com.accounting.system.controller;
 import com.accounting.system.model.vo.PageVO;
 import com.accounting.system.model.vo.ResultVO;
 import com.accounting.system.model.vo.UserVO;
+import com.accounting.system.security.UserPrincipal;
 import com.accounting.system.service.AdminService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -19,9 +21,9 @@ import java.util.Map;
  * .requestMatchers("/api/admin/**").hasRole("ADMIN")
  * 非管理员用户请求会收到 403 Forbidden
  *
- * 【注意】
- * Admin接口不需要 @AuthenticationPrincipal 获取当前用户,
- * 因为管理员操作的是其他用户的数据，不是自己的
+ * 【v1.0.1 安全增强】
+ * toggleUserStatus 通过 @AuthenticationPrincipal 获取当前管理员ID，
+ * 防止管理员误禁用自己的账号
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -43,15 +45,17 @@ public class AdminController {
 
     /**
      * 切换用户启用/禁用状态
+     * 传入当前管理员ID，防止误禁自身
      */
     @PutMapping("/users/{id}/status")
-    public ResultVO<Void> toggleUserStatus(@PathVariable Long id) {
-        adminService.toggleUserStatus(id);
+    public ResultVO<Void> toggleUserStatus(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        adminService.toggleUserStatus(principal.getUserId(), id);
         return ResultVO.success();
     }
 
     /**
-     * 重置用户密码（设为默认密码 123456）
+     * 重置用户密码（随机8位密码）
      */
     @PutMapping("/users/{id}/reset-password")
     public ResultVO<Void> resetUserPassword(@PathVariable Long id) {
