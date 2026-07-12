@@ -20,6 +20,27 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * ============================================================
+ * 周期账单服务实现
+ * ============================================================
+ *
+ * 【自动生成流程】
+ * processDueRecurringBills 的执行流程：
+ * 1. 查询所有 isActive=true 且 nextDate &lt;= 今天 的记录
+ * 2. 为每条记录生成实际 Bill（标记 "[周期]" 前缀）
+ * 3. 计算并更新下一次执行日期（nextDate = nextDate + N天/周/月/年）
+ *
+ * 【定时调度】
+ * cron = "0 0 3 * * ?" 表示每天凌晨3:00执行
+ *
+ * 【软删除】
+ * deleteRecurringBill 只设置 isActive=false，不物理删除
+ *
+ * 【v1.0.1 容错增强】
+ * processDueRecurringBills 中增加逐条 try-catch，
+ * 单条周期账单处理失败不影响其他记录的生成
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -29,6 +50,10 @@ public class RecurringBillServiceImpl implements RecurringBillService {
     private final CategoryRepository categoryRepository;
     private final BillRepository billRepository;
 
+    /**
+     * 创建周期账单
+     * cycleValue 默认为1（如不传则为每1个月/每1周）
+     */
     @Override
     @Transactional
     public RecurringBillVO createRecurringBill(Long userId, RecurringBillDTO dto) {
@@ -52,6 +77,9 @@ public class RecurringBillServiceImpl implements RecurringBillService {
         return toRecurringBillVO(rb);
     }
 
+    /**
+     * 查询用户的所有活跃周期账单
+     */
     @Override
     public List<RecurringBillVO> listRecurringBills(Long userId) {
         return recurringBillRepository.findByUserIdAndIsActiveTrue(userId)

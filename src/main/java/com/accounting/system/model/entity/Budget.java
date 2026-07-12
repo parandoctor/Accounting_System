@@ -19,9 +19,10 @@ import java.time.LocalDateTime;
  *   一个用户在一个月内，对同一分类只能设置一条预算
  *   category_id 可为 null（表示总预算，不区分分类）
  *
- * 【预算追踪机制】
- * 设置预算时：自动查询该分类当月的实际支出，填充 spentAmount
- * 创建账单时：需要同步更新对应预算的 spentAmount
+ * 【预算追踪机制 v1.0.1】
+ * spentAmount 和 isOverBudget 保留在实体中用于持久化存储，
+ * 但查询时优先使用实时聚合计算（从 Bill 表 GROUP BY），
+ * 保证数据始终准确。
  *
  * 【与Bill的区别】
  * Bill  —— 已发生的收支记录（事实）
@@ -62,13 +63,13 @@ public class Budget {
     @Column(name = "budget_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal budgetAmount;
 
-    /** 已花费金额：该分类当月实际支出总和，创建/修改账单时实时更新 */
-    //@Column(name = "spent_amount", precision = 12, scale = 2)
-    //private BigDecimal spentAmount;
+    /** 已花费金额：该分类当月实际支出总和，查询时优先实时聚合计算 */
+    @Column(name = "spent_amount", precision = 12, scale = 2)
+    private BigDecimal spentAmount;
 
     /** 是否超预算：spentAmount > budgetAmount 时自动设为true */
-    //@Column(name = "is_over_budget")
-    //private Boolean isOverBudget;
+    @Column(name = "is_over_budget")
+    private Boolean isOverBudget;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

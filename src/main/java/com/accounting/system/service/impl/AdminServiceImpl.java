@@ -23,6 +23,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * ============================================================
+ * 管理员服务实现
+ * ============================================================
+ *
+ * 【安全约束 v1.0.1】
+ * - 管理员不能禁用自己的账号（toggleUserStatus 中校验 currentAdminId）
+ * - 不能禁用其他管理员账号
+ * - 密码重置为随机8位密码（大小写字母+数字），记录日志供管理员传达
+ *
+ * 【模糊搜索】
+ * listUsers 对 username 和 nickname 字段做 OR 模糊匹配
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -57,28 +70,23 @@ public class AdminServiceImpl implements AdminService {
         return PageVO.of(userPage.getTotalElements(), page, size, records);
     }
 
-   @Override
-   @Transactional
-   public void toggleUserStatus(Long currentAdminId, Long targetUserId) {
-    if (currentAdminId.equals(targetUserId)) {
-        throw new BusinessException("不能禁用自己");
-    }
-    // ... 其余逻辑
-    }
+    @Override
+    @Transactional
+    public void toggleUserStatus(Long currentAdminId, Long targetUserId) {
+        if (currentAdminId.equals(targetUserId)) {
+            throw new BusinessException("不能禁用自己的账号");
+        }
 
-        // 禁止禁用自身（防止管理员意外锁定自己）
-        // 注意：此处无法获取当前用户ID，需在Controller层传入或从SecurityContext获取。
-        // 为简单，我们改为在Controller中传入当前用户ID，但为了保持接口不变，我们可以在Service中获取当前用户，
-        // 但由于AdminService未传递当前用户，我们暂时忽略此检查，建议在Controller层做。
-        // 这里我们添加一个注释，实际使用时建议通过SecurityContextHolder获取。
-        // 若需要严格实现，可添加参数 currentAdminId。
-        // 以下为示例（假设方法参数增加 currentAdminId）：
-        // if (userId.equals(currentAdminId)) throw new BusinessException("不能禁用自己");
-        // 由于接口未变，此版本暂不添加，但提示开发者。
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new BusinessException("用户不存在"));
+
+        if (user.getRole() == User.Role.ADMIN) {
+            throw new BusinessException("不能禁用管理员账号");
+        }
 
         user.setStatus(user.getStatus() == User.Status.ACTIVE ? User.Status.DISABLED : User.Status.ACTIVE);
         userRepository.save(user);
-        log.info("User {} status toggled to {} by admin", userId, user.getStatus());
+        log.info("User {} status toggled to {} by admin {}", targetUserId, user.getStatus(), currentAdminId);
     }
 
     @Override
@@ -87,14 +95,11 @@ public class AdminServiceImpl implements AdminService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
 
-        // 生成随机密码（8位）
         String newPassword = generateRandomPassword(8);
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
 
-        // 记录日志（生产环境应通过邮件通知用户）
-        log.warn("Password reset for user {} to: {}", userId, newPassword);
-        // 注意：实际项目中应将密码通过安全方式发送给用户，此处仅演示
+        log.warn("Password reset for user {}: new password is [{}] (convey securely)", userId, newPassword);
     }
 
     @Override
