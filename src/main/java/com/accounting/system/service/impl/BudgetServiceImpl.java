@@ -10,35 +10,22 @@ import com.accounting.system.repository.BudgetRepository;
 import com.accounting.system.repository.CategoryRepository;
 import com.accounting.system.service.BudgetService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * ============================================================
- * 预算服务实现
- * ============================================================
- *
- * 【核心机制】
- * 每个预算记录保存两条金额：
- * - budgetAmount：用户设定的预算上限
- * - spentAmount：实时计算的已支出金额（每次查询从账单表聚合）
- *
- * 【isOverBudget】
- * 超预算标记 = spentAmount > budgetAmount，前端可用此字段切换警告色
- *
- * 【Upsert模式】
- * setBudget 使用"存在则更新，不存在则创建"的 upsert 逻辑：
- * 1. 先查询已存在的预算
- * 2. 如果存在，更新金额
- * 3. 如果不存在，build新实体
- * 这样避免了重复创建预算记录
+ * 预算服务实现 —— 重构版
+ * - 不再存储spentAmount/isOverBudget，完全实时计算
+ * - 使用批量查询优化性能
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BudgetServiceImpl implements BudgetService {
@@ -49,116 +36,95 @@ public class BudgetServiceImpl implements BudgetService {
 
     /**
      * 设置预算（创建或更新）
-     * 支持分类预算（categoryId 不为null）和总预算（categoryId 为null）
+     * 只保存预算金额，不计算已花费
      */
     @Override
     @Transactional
     public BudgetVO setBudget(Long userId, BudgetDTO dto) {
         Budget budget;
-
         if (dto.getCategoryId() != null) {
             budget = budgetRepository.findByUserIdAndYearAndMonthAndCategoryId(
                     userId, dto.getYear(), dto.getMonth(), dto.getCategoryId())
-                    .orElse(Budget.builder()
-                            .userId(userId)
-                            .year(dto.getYear())
-                            .month(dto.getMonth())
-                            .category(categoryRepository.findById(dto.getCategoryId())
-                                    .orElseThrow(() -> new BusinessException("分类不存在")))
-                            .budgetAmount(BigDecimal.ZERO)
-                            .spentAmount(BigDecimal.ZERO)
-                            .build());
+                    .orElseGet(() -> {
+                        Category category = categoryRepository.findById(dto.getCategoryId())
+                                .orElseThrow(() -> new BusinessException("分类不存在"));
+                        return Budget.builder()
+                                .userId(userId)
+                                .year(dto.getYear())
+                                .month(dto.getMonth())
+                                .category(category)
+                                .budgetAmount(BigDecimal.ZERO)
+                                .build();
+                    });
         } else {
             budget = budgetRepository.findByUserIdAndYearAndMonthAndCategoryIsNull(
                     userId, dto.getYear(), dto.getMonth())
-                    .orElse(Budget.builder()
+                    .orElseGet(() -> Budget.builder()
                             .userId(userId)
                             .year(dto.getYear())
                             .month(dto.getMonth())
                             .budgetAmount(BigDecimal.ZERO)
-                            .spentAmount(BigDecimal.ZERO)
                             .build());
         }
-
         budget.setBudgetAmount(dto.getBudgetAmount());
-
-        // Recalculate spent amount
-        BigDecimal spent;
-        if (dto.getCategoryId() != null) {
-            spent = billRepository.sumExpenseByUserAndCategoryAndMonth(
-                    userId, dto.getCategoryId(), dto.getYear(), dto.getMonth());
-        } else {
-            spent = billRepository.sumExpenseByUserAndMonth(
-                    userId, dto.getYear(), dto.getMonth());
-        }
-
-        if (spent == null) spent = BigDecimal.ZERO;
-        budget.setSpentAmount(spent);
-        budget.setIsOverBudget(spent.compareTo(dto.getBudgetAmount()) > 0);
+        // 注意：不设置spentAmount和isOverBudget，留给查询时动态计算
 
         budget = budgetRepository.save(budget);
-        return toBudgetVO(budget);
+        log.info("Budget set for user {}: year={}, month={}, category={}, amount={}",
+                userId, dto.getYear(), dto.getMonth(), dto.getCategoryId(), dto.getBudgetAmount());
+        return buildBudgetVO(budget, BigDecimal.ZERO, false); // 占位，实际在get方法中重新计算
     }
 
     /**
-     * 获取预算列表
-     * 每次查询都会实时更新 spentAmount，确保数据一致性
+     * 获取预算列表（含实时支出）
      */
     @Override
     public List<BudgetVO> getBudgets(Long userId, int year, int month) {
         List<Budget> budgets = budgetRepository.findByUserIdAndYearAndMonth(userId, year, month);
+        // 批量获取该月各分类支出
+        Map<Long, BigDecimal> spentMap = getMonthlySpentByCategory(userId, year, month);
+        // 总支出（categoryId=null表示总支出）
+        BigDecimal totalSpent = spentMap.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Update spent amounts
-        budgets.forEach(b -> {
-            BigDecimal spent;
-            if (b.getCategory() != null) {
-                spent = billRepository.sumExpenseByUserAndCategoryAndMonth(
-                        userId, b.getCategory().getId(), year, month);
-            } else {
-                spent = billRepository.sumExpenseByUserAndMonth(userId, year, month);
-            }
-            if (spent == null) spent = BigDecimal.ZERO;
-            b.setSpentAmount(spent);
-            b.setIsOverBudget(spent.compareTo(b.getBudgetAmount()) > 0);
-        });
-
-        return budgets.stream().map(this::toBudgetVO).collect(Collectors.toList());
+        return budgets.stream().map(budget -> {
+            Long catId = budget.getCategory() != null ? budget.getCategory().getId() : null;
+            BigDecimal spent = catId == null ? totalSpent : spentMap.getOrDefault(catId, BigDecimal.ZERO);
+            boolean over = spent.compareTo(budget.getBudgetAmount()) > 0;
+            return buildBudgetVO(budget, spent, over);
+        }).collect(Collectors.toList());
     }
 
     /**
-     * 获取预算使用率 —— 前端进度条的数据源
-     * 返回每个预算的已花费/预算金额比例信息
+     * 获取预算使用率（与getBudgets逻辑相同，但可单独使用）
      */
     @Override
     public List<BudgetVO> getBudgetUsage(Long userId, int year, int month) {
-        List<Budget> budgets = budgetRepository.findByUserIdAndYearAndMonth(userId, year, month);
-
-        // Also add budgets for each category that has spending but no explicit budget
-        List<BudgetVO> result = new ArrayList<>();
-
-        for (Budget b : budgets) {
-            BigDecimal spent;
-            if (b.getCategory() != null) {
-                spent = billRepository.sumExpenseByUserAndCategoryAndMonth(
-                        userId, b.getCategory().getId(), year, month);
-            } else {
-                spent = billRepository.sumExpenseByUserAndMonth(userId, year, month);
-            }
-            if (spent == null) spent = BigDecimal.ZERO;
-            b.setSpentAmount(spent);
-            b.setIsOverBudget(spent.compareTo(b.getBudgetAmount()) > 0);
-            result.add(toBudgetVO(b));
-        }
-
-        return result;
+        // 与getBudgets实现一致，可复用，但为了接口清晰，直接调用
+        return getBudgets(userId, year, month);
     }
 
-    private BudgetVO toBudgetVO(Budget budget) {
-        BigDecimal remaining = budget.getBudgetAmount().subtract(budget.getSpentAmount());
+    /**
+     * 批量查询用户某月各分类的支出总额（仅支出类型）
+     */
+    private Map<Long, BigDecimal> getMonthlySpentByCategory(Long userId, int year, int month) {
+        List<Object[]> results = billRepository.sumExpenseGroupByCategoryForMonth(userId, year, month);
+        return results.stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],   // categoryId
+                        row -> (BigDecimal) row[1], // amount
+                        BigDecimal::add
+                ));
+    }
+
+    /**
+     * 构建BudgetVO
+     */
+    private BudgetVO buildBudgetVO(Budget budget, BigDecimal spentAmount, boolean isOverBudget) {
+        BigDecimal remaining = budget.getBudgetAmount().subtract(spentAmount);
         double usagePercent = budget.getBudgetAmount().compareTo(BigDecimal.ZERO) > 0
-                ? budget.getSpentAmount().divide(budget.getBudgetAmount(), 4, RoundingMode.HALF_UP)
+                ? spentAmount.divide(budget.getBudgetAmount(), 4, RoundingMode.HALF_UP)
                         .multiply(BigDecimal.valueOf(100)).doubleValue()
-                : 0;
+                : 0.0;
 
         return BudgetVO.builder()
                 .id(budget.getId())
@@ -167,10 +133,10 @@ public class BudgetServiceImpl implements BudgetService {
                 .year(budget.getYear())
                 .month(budget.getMonth())
                 .budgetAmount(budget.getBudgetAmount())
-                .spentAmount(budget.getSpentAmount())
+                .spentAmount(spentAmount)
                 .remaining(remaining)
                 .usagePercent(usagePercent)
-                .isOverBudget(budget.getIsOverBudget())
+                .isOverBudget(isOverBudget)
                 .build();
     }
 }

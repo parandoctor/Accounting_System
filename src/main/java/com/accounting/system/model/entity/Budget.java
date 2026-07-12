@@ -63,12 +63,12 @@ public class Budget {
     private BigDecimal budgetAmount;
 
     /** 已花费金额：该分类当月实际支出总和，创建/修改账单时实时更新 */
-    @Column(name = "spent_amount", precision = 12, scale = 2)
-    private BigDecimal spentAmount;
+    //@Column(name = "spent_amount", precision = 12, scale = 2)
+    //private BigDecimal spentAmount;
 
     /** 是否超预算：spentAmount > budgetAmount 时自动设为true */
-    @Column(name = "is_over_budget")
-    private Boolean isOverBudget;
+    //@Column(name = "is_over_budget")
+    //private Boolean isOverBudget;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

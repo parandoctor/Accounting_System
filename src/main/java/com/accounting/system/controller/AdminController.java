@@ -45,10 +45,11 @@ public class AdminController {
      * 切换用户启用/禁用状态
      */
     @PutMapping("/users/{id}/status")
-    public ResultVO<Void> toggleUserStatus(@PathVariable Long id) {
-        adminService.toggleUserStatus(id);
-        return ResultVO.success();
-    }
+public ResultVO<Void> toggleUserStatus(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id) {
+    adminService.toggleUserStatus(principal.getUserId(), id);
+    return ResultVO.success();
+}
 
     /**
      * 重置用户密码（设为默认密码 123456）
